@@ -1,3 +1,6 @@
 *.pyc
 train.csv
 train_images/*
+scripts/prediction/*
+scripts/unet_trained/*
+
