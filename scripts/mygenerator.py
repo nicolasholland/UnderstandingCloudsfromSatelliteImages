@@ -2,7 +2,9 @@ from os.path import join, dirname
 import numpy as np
 import pandas as pd
 import imageio
-
+from skimage import color
+from skimage.transform import resize
+from tf_unet import unet
 
 class MyGenerator(object):
 
@@ -12,8 +14,15 @@ class MyGenerator(object):
         df["filename"] = df["Image_Label"].apply(lambda x : x.split("_")[0])
         df["labelname"] = df["Image_Label"].apply(lambda x : x.split("_")[1])
         self.df = df
-        self.input_shape = (1400, 2100)
+        self.nx = int(1400 / 4)
+        self.ny = int(2100 / 4)
         self.imagepath = join(base, "train_images")
+        self.channels = 1
+        self.n_class = 2
+        self.a_max = np.inf
+        self.a_min = -np.inf
+        self.kwargs = {'cnt': 20}
+        self.resize = True
 
     def rle2mask(self, encoded_label):
         """
@@ -21,7 +30,7 @@ class MyGenerator(object):
         ------
         https://www.kaggle.com/saneryee/understanding-clouds-keras-unet
         """
-        width, height = self.input_shape
+        width, height = self.nx, self.ny
 
         mask= np.zeros( width*height ).astype(np.uint8)
 
@@ -39,9 +48,17 @@ class MyGenerator(object):
 
         return mask.reshape(height, width).T
 
+    def _resize(self, image):
+        retval = resize(image, (self.nx, self.ny), anti_aliasing=True)
+        return retval
+
+
     def _imread(self, filename):
         """ wrapper for imageio.imread """
-        return imageio.imread(join(self.imagepath, filename))
+        retval =  imageio.imread(join(self.imagepath, filename))
+        retval= color.rgb2gray(retval)
+
+        return retval
 
     def __call__(self, nof):
         """ generate training data and labels in the format needed by unet
@@ -53,16 +70,25 @@ class MyGenerator(object):
         """
         idxs = np.random.randint(0, len(self.df), nof)
 
-        lcs = lambda f, n : np.stack([f(self.df.iloc[idx][n]) for idx in idxs])
+        if self.resize:
+            lcs = lambda f, n : np.stack([self._resize(f(self.df.iloc[idx][n]))
+                                            for idx in idxs])
+        else:
+            lcs = lambda f, n : np.stack([f(self.df.iloc[idx][n]) for idx in idxs])
+
 
         images = lcs(self._imread, "filename")
         labels = lcs(self.rle2mask, "EncodedPixels")
-        invlabels = 1 - labels
 
-        labels = np.moveaxis(np.stack([labels, invlabels]), 0, 3)
+        images = np.moveaxis(np.stack([images]), 0, 3)
+        inv = 1 - labels
+        labels = np.moveaxis(np.stack([labels, inv]), 0, 3)
 
-        return images, labels
+        return images.astype(np.float64), labels.astype(np.float64)
 
 
 mg = MyGenerator()
+net = unet.Unet(channels=mg.channels, n_class=mg.n_class, layers=3, features_root=16)
+trainer = unet.Trainer(net, optimizer="momentum", opt_kwargs=dict(momentum=0.2))
+path = trainer.train(mg, "./unet_trained", training_iters=32, epochs=10, display_step=2)
 
