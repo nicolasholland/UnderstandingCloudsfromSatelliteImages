@@ -79,12 +79,10 @@ class MyGenerator(object):
 
         images = lcs(self._imread, "filename")
         labels = lcs(self.rle2mask, "EncodedPixels")
-
-        images = np.moveaxis(np.stack([images]), 0, 3)
         inv = 1 - labels
-        labels = np.moveaxis(np.stack([labels, inv]), 0, 3)
 
-        return images.astype(np.float64), labels.astype(np.float64)
+        prep = lambda al : np.moveaxis(np.stack(al), 0, 3).astype(np.float64)
+        return prep([images]), prep([labels, inv])
 
 
 mg = MyGenerator()
