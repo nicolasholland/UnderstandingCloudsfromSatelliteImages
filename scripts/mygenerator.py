@@ -44,13 +44,22 @@ class MyGenerator(object):
         return imageio.imread(join(self.imagepath, filename))
 
     def __call__(self, nof):
-        """ generate training data and labels in the format needed by unet """
+        """ generate training data and labels in the format needed by unet
+
+        Returns
+        -------
+        x : np.array of shape (nofc, xdim, ydim, 1 or 3)
+        y : np.array of shaoe (nofc, xdim, ydim, 2)
+        """
         idxs = np.random.randint(0, len(self.df), nof)
 
         lcs = lambda f, n : np.stack([f(self.df.iloc[idx][n]) for idx in idxs])
 
         images = lcs(self._imread, "filename")
         labels = lcs(self.rle2mask, "EncodedPixels")
+        invlabels = 1 - labels
+
+        labels = np.moveaxis(np.stack([labels, invlabels]), 0, 3)
 
         return images, labels
 
