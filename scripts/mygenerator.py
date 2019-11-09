@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import imageio
 from skimage import color
-from skimage.transform import resize
+import cv2
 from tf_unet import unet
 
 class MyGenerator(object):
@@ -14,8 +14,9 @@ class MyGenerator(object):
         df["filename"] = df["Image_Label"].apply(lambda x : x.split("_")[0])
         df["labelname"] = df["Image_Label"].apply(lambda x : x.split("_")[1])
         self.df = df
-        self.nx = int(1400 / 4)
-        self.ny = int(2100 / 4)
+        self.shape = (1400, 2100)
+        self.nx = 350
+        self.ny = 525
         self.imagepath = join(base, "train_images")
         self.channels = 1
         self.n_class = 2
@@ -23,6 +24,7 @@ class MyGenerator(object):
         self.a_min = -np.inf
         self.kwargs = {'cnt': 20}
         self.resize = True
+#        self.resize = False
 
     def rle2mask(self, encoded_label):
         """
@@ -30,7 +32,7 @@ class MyGenerator(object):
         ------
         https://www.kaggle.com/saneryee/understanding-clouds-keras-unet
         """
-        width, height = self.nx, self.ny
+        width, height = self.shape
 
         mask= np.zeros( width*height ).astype(np.uint8)
 
@@ -49,7 +51,7 @@ class MyGenerator(object):
         return mask.reshape(height, width).T
 
     def _resize(self, image):
-        retval = resize(image, (self.nx, self.ny), anti_aliasing=True)
+        retval = cv2.resize(image, (self.ny, self.nx))
         return retval
 
 
@@ -74,7 +76,8 @@ class MyGenerator(object):
             lcs = lambda f, n : np.stack([self._resize(f(self.df.iloc[idx][n]))
                                             for idx in idxs])
         else:
-            lcs = lambda f, n : np.stack([f(self.df.iloc[idx][n]) for idx in idxs])
+            lcs = lambda f, n : np.stack([f(self.df.iloc[idx][n])
+                                          for idx in idxs])
 
 
         images = lcs(self._imread, "filename")
@@ -82,11 +85,25 @@ class MyGenerator(object):
         inv = 1 - labels
 
         prep = lambda al : np.moveaxis(np.stack(al), 0, 3).astype(np.float64)
-        return prep([images]), prep([labels, inv])
+        return prep([images]), prep([inv, labels])
+
+class OneClassGenerator(MyGenerator):
+    """ Subclass of MyGenerator used for specific label classes
+
+    Options: fish, Flower, Gravel, Sugar
+    """
+
+    def __init__(self, labelclass):
+        assert(labelclass in ["Fish", "Flower", "Gravel", "Sugar"])
+        super().__init__()
+        self.labelclass = labelclass
+        self.df = self.df.dropna().query("labelname == '%s'" % (labelclass))
 
 
-mg = MyGenerator()
-net = unet.Unet(channels=mg.channels, n_class=mg.n_class, layers=3, features_root=16)
-trainer = unet.Trainer(net, optimizer="momentum", opt_kwargs=dict(momentum=0.2))
-path = trainer.train(mg, "./unet_trained", training_iters=32, epochs=10, display_step=2)
-
+def train(gen):
+    net = unet.Unet(channels=gen.channels, n_class=gen.n_class, layers=5,
+                    features_root=16)
+    trainer = unet.Trainer(net, optimizer="momentum",
+                           opt_kwargs=dict(momentum=0.2))
+    trainer.train(gen, "./unet_trained/%s" % (gen.labelclass),
+                  training_iters=32, epochs=100, display_step=2)
