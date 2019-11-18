@@ -1,3 +1,4 @@
+import os
 from os.path import join, dirname
 import numpy as np
 import pandas as pd
@@ -55,10 +56,11 @@ class MyGenerator(object):
         return retval
 
 
-    def _imread(self, filename):
+    def _imread(self, filename, gray=True):
         """ wrapper for imageio.imread """
         retval =  imageio.imread(join(self.imagepath, filename))
-        retval= color.rgb2gray(retval)
+        if gray:
+            retval= color.rgb2gray(retval)
 
         return retval
 
@@ -107,3 +109,57 @@ def train(gen):
                            opt_kwargs=dict(momentum=0.2))
     trainer.train(gen, "./unet_trained/%s" % (gen.labelclass),
                   training_iters=32, epochs=100, display_step=2)
+
+class MyPredictor(MyGenerator):
+
+    def __init__(self):
+        self.net = unet.Unet(channels=1, n_class=2, layers=5,
+                             features_root=16)
+        base = dirname(dirname(__file__))
+        self.imagepath = join(base, "testimages")
+        self.models = ["Fish", "Flower", "Gravel", "Sugar"]
+        self.testimages = os.listdir(self.imagepath)
+        self.nx = 350
+        self.ny = 525
+        self.mt = {"Fish": .5, "Gravel": .38263,
+                   "Flower": .4999, "Sugar": .39}
+        self.cropx = 196
+        self.cropy = 192
+
+    @staticmethod
+    def _modelpath(model):
+        return join(dirname(__file__), "unet_trained", model, "model.ckpt")
+
+    def predict(self, data, model="Fish"):
+        retval = self.net.predict(self._modelpath(model), data)
+        return self._postresult(retval, model)
+
+    @staticmethod
+    def _fixdim(arr):
+        """ (x, y) -> (1, x, y, 1)"""
+        return np.moveaxis(np.array([[arr]]), 0, 3)
+
+    def _postresult(self, arr, model, resize=False):
+        retval = (arr[0, ..., 1] > self.mt[model]).astype(np.uint8)
+        if resize:
+            retval = cv2.resize(retval, (self.ny, self.nx))
+        return retval
+
+    def _crop(self, arr):
+        return arr[int(self.cropx/2): -int(self.cropx/2),
+                   int(self.cropy/2): -int(self.cropy/2)]
+
+    def prettypredict(self, num, model, strength=75):
+        """ """
+        img = self._imread(self.testimages[num], gray=False)
+        gray = self._fixdim(self._imread(self.testimages[num], gray=True))
+        mask = self.predict(gray, model)
+
+        #crop and resize
+        img = self._crop(img)
+        img = cv2.resize(img, mask.shape[::-1])
+
+        retval = (img * 0.6).astype(np.uint8)
+        retval[:, :, 1] += strength * mask # change here for different color
+        return retval
+
