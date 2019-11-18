@@ -4,3 +4,6 @@ train_images/*
 scripts/prediction/*
 scripts/unet_trained/*
 scripts/pictures/*
+testimages/*
+scripts/prediction_Flower/*
+
